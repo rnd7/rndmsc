@@ -1,5 +1,5 @@
 # Goldsource rndmsc
-Just some more or less random music.
+More or less random pure js music.
 
 ## Run
 Open index.html in your browser or navigate to [rndmsc](https://rnd7.github.io/rndmsc/)
