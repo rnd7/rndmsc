@@ -27,474 +27,39 @@ canvas{
 <body>
 <canvas id="oscilloscope"></canvas>
 <script>
-(function(){  
-  /* CONST ********************************************************************/
-  const GLOBAL_GAIN = .3;
-  /* DYNAMIC ******************************************************************/
-  var actx;
-  var master;
-  var reverb;
-  var compressor;
-  var compressor2;
-  var pink_noise;
-  var brownian_noise;
-  var reverb_impulse;
-  var white_noise;
-  var oscilloscope;
-  var analyser;
-  var analyser_buffer_length;
-  var analyser_data;
-  var beats_per_minute = 90;
-  var ticks_per_beat = 4;
-  var beats_per_bar = 4;
-  var bars_per_phrase = 4;
-  var time_per_beat = 60/beats_per_minute;
-  var time_per_bar = time_per_beat*beats_per_bar;
-  var time_per_tick = time_per_beat/ticks_per_beat;
-  var time_per_phrase = time_per_bar*bars_per_phrase;
-  var beats_per_phrase = bars_per_phrase*beats_per_bar;
-  var ticks_per_phrase = beats_per_phrase*ticks_per_beat;
-  var pre_queue = time_per_phrase/2;
-  var queued;
-  var clock;
-  var count = 0;  
-  /* INIT *********************************************************************/
-  window.onload = function(){ 
-    console.log("onload");
-    if(!window.AudioContext){
-      if(!window.webkitAudioContext) throw("Your browser sucks");
-      else window.AudioContext = window.webkitAudioContext;
-    }
-    oscilloscope = document.getElementById("oscilloscope");
-    actx = new AudioContext(); 
-    queued = clock = actx.currentTime;
-    // static buffers
-    pink_noise = makePinkNoise(actx,2);
-    brownian_noise = makeBrownianNoise(actx,2);
-    white_noise = makeWhiteNoise(actx,2);
-    reverb_impulse = makeImpulseResponse(actx,time_per_bar,time_per_bar,false);    
-    // Bus
-    master = actx.createGain();
-    master.gain.value = 0.9;
-    // Analyser
-    analyser = actx.createAnalyser();
-    analyser.fftSize = 2048;
-    analyser_buffer_length = analyser.frequencyBinCount;
-    analyser_data = new Uint8Array(analyser_buffer_length);   
-    // reverb
-    reverb = actx.createConvolver();
-    reverb.buffer = reverb_impulse;
-    // Compressor
-    compressor2 = actx.createDynamicsCompressor();
-    compressor2.knee.value = 23;
-    compressor2.threshold.value = -1;
-    compressor2.ratio.value = 20;
-    compressor2.attack.value = .1
-    compressor2.release.value = .1
-    // Compressor
-    compressor = actx.createDynamicsCompressor();
-   /* compressor.knee.value = 30;
-    compressor.threshold.value = -24;
-    compressor.ratio.value = 20;
-    compressor.attack.value = .001
-    compressor.release.value = .01*/
-   // compressor
-    // Routing
-    reverb.connect(master)
-    compressor.connect(master)
-    compressor2.connect(master)
-    master.connect(actx.destination);
-    master.connect(analyser);
-    // Kick it
-    loop();
-  }
-  /* Main Loop ****************************************************************/
-  var loop = function(){
-    clock = actx.currentTime;
-    if(clock>=queued-pre_queue){ 
-      queueSequence(queued);  
-      queued += time_per_phrase;
-    }
-    drawOscilloscope();
-    requestAnimationFrame(loop);
-  }
-  var harmonic_scale = 1.0594630943593;
-  /* Sequences ****************************************************************/
-  var queueSequence = function(start_time){
-    var hihat_count = 0;
-    var hihat_delay = .0001;
-    var time = start_time;
-    for(var bar=0; bar<bars_per_phrase;bar++){ 
-      var b_freq = Math.pow(harmonic_scale,10+getMatchingNote(bass_note)-49)*440;
-      if(bar%2==0)lead(actx,reverb,b_freq*4,1,.5,time+time_per_beat);
-      bass(actx,compressor,b_freq,.8,1,time);
-      bass(actx,compressor,b_freq,.8,.4,time+time_per_bar+time_per_beat*2);
-      bass(actx,compressor,b_freq,.8,.6,time+time_per_bar*2+time_per_beat*3+time_per_tick*2);
-      var b_freq = Math.pow(harmonic_scale,10+getMatchingNote(bass_note)-49)*440;
-      bass(actx,reverb,b_freq,1,.6,time+time_per_tick*2);
-      bass(actx,reverb,b_freq*2,1,.3,time+time_per_beat);
-      for(var beat=0; beat<beats_per_bar;beat++){
-        if(beat==1)snare(actx,compressor,b_freq*2,1,1,time);
-        if(beat==3)snare(actx,compressor,b_freq*4,1,.5,time);
-        if(beat==3&&Math.random()>.5)snare(actx,compressor,b_freq*2,1,1,time+time_per_tick);
-        if(beat==0)kick(actx,compressor,b_freq/2,1,1,time);
-        if(beat==0&&bar%2==0&&Math.random()>.5)kick(actx,reverb,b_freq/2,1,1,time);
-        if(beat==1&&bar%2==0)kick(actx,compressor2,b_freq,1,1,time);
-        if(beat==2)kick(actx,compressor,b_freq,1,1,time-time_per_tick*2);
-        if(beat==3)kick(actx,compressor,b_freq/2,1,.1,time);
-        for(var tick=0; tick<ticks_per_beat;tick++){
-           if(hihat_count==0&&beat==1)hihat(actx,compressor,0,1,1,time+hihat_delay); 
-           if(hihat_count==0)hihat(actx,master,0,1,.3,time+hihat_delay);
-           if(hihat_count==1&&Math.random()>.01)hihat(actx,master,0,1,.3,time+hihat_delay+time_per_tick);
-           hihat_count = (hihat_count+1)%2;
-           time+=time_per_tick;
-        }
-      }
-    }
-  }
-  var kick_note = 10;
-  var bass_note = 10;
-  var lead_note = 22;
-  var note_offset = 0;
-  var getMatchingNote = function(note){
-   
-      if(Math.random()>=.5){
-        return note+3%12;
-      }else{      
-        return (note-3+12)%12;
-      }
-   
-  }
-  /* Instruments **************************************************************/
-  /**
-  * Simple Tuned Bass Drum (with a small hihat)
-  */
-  var kick = function(actx,destination,freq,duration,volume,offset){  
-    
-    //console.log("add",++count);
-    var time = (offset||0);
-    // sources
-    var oscillatorA = actx.createOscillator(); 
-    oscillatorA.type = 0;    
-    oscillatorA.frequency.setValueAtTime(freq,time);
-    oscillatorA.frequency.linearRampToValueAtTime(freq*2,time+.05);
-    oscillatorA.frequency.linearRampToValueAtTime(freq,time+.1);
-    oscillatorA.start(time);
-    oscillatorA.stop((offset+2))
-    var oscillatorB = actx.createOscillator(); 
-    oscillatorB.type = 0;
-    oscillatorB.frequency.setValueAtTime(freq,time);
-    oscillatorB.frequency.linearRampToValueAtTime(freq*2,time+.2);
-    oscillatorB.start(time+.001);
-    oscillatorB.stop((offset+2))
-    var oscillatorC = actx.createOscillator(); 
-    oscillatorC.frequency.value = freq;
-    oscillatorC.type = 1
-    oscillatorC.start(time+0.007);
-    oscillatorC.stop(offset+2);
-    var noise = actx.createBufferSource();
-    noise.buffer = pink_noise;
-    noise.loop = true;
-    noise.start(time);
-    noise.stop((offset+2))
-    // filter
-    var filter = actx.createBiquadFilter();
-    filter.type = filter.LOWPASS; 
-    filter.Q.setValueAtTime(.5,time);
-    filter.Q.linearRampToValueAtTime(1,time+.05);
-    filter.frequency.setValueAtTime(freq*100,time);
-    filter.frequency.linearRampToValueAtTime(freq*2,time+.08 );   
-    // Gain
-    var envelope = actx.createGain();
-    envelope.gain.setValueAtTime(0,time);      
-    envelope.gain.linearRampToValueAtTime(1*volume,time+.0001);      
-    envelope.gain.linearRampToValueAtTime(.8*volume,time+.1);   
-    envelope.gain.linearRampToValueAtTime(0,time+.6);
-    var noisegain = actx.createGain(); 
-    noisegain.gain.setValueAtTime(0,time);
-    noisegain.gain.linearRampToValueAtTime(1*volume,time+.0001);
-    noisegain.gain.linearRampToValueAtTime(0,time+.06);
-    var output = actx.createGain();
-    output.gain.value = GLOBAL_GAIN;
-    // Routing
-    oscillatorA.connect(envelope);
-    oscillatorB.connect(envelope);
-    oscillatorC.connect(envelope);
-    noise.connect(noisegain);
-    noisegain.connect(filter);
-    envelope.connect(filter);
-    filter.connect(output);
-    output.connect(destination)
-    // get rid of it
-    setTimeout(function(){
-      //console.log("remove",--count);
-      oscillatorA.disconnect();
-      oscillatorB.disconnect();
-      oscillatorC.disconnect();
-      noise.disconnect();
-      envelope.disconnect();
-      noisegain.disconnect();
-      filter.disconnect();
-      output.disconnect();
-    },(((offset-actx.currentTime)+3)*1000<<0))      
-  }
-  /**
-  * Hihat
-  */
-  var hihat = function(actx,destination,freq,duration,volume,offset){  
-    return
-    //console.log("add",++count);
-    var time = (offset||0);
-    // sources
-    
-    var noise = actx.createBufferSource();
-    noise.buffer = white_noise;
-    noise.loop = true;
-    noise.start(time);
-    noise.stop((offset+2))
-    // filter
-    var filter = actx.createBiquadFilter();
-    filter.type = filter.HIGHPASS; 
-    filter.Q.setValueAtTime(.5,time);
-    filter.Q.linearRampToValueAtTime(1,time+.05);
-    filter.frequency.setValueAtTime(freq*10,time);
-    filter.frequency.linearRampToValueAtTime(freq*2,time+.08 );   
-    // Gain
-    var envelope = actx.createGain();
-    envelope.gain.setValueAtTime(0,time);      
-    envelope.gain.linearRampToValueAtTime(1*volume,time+.0001);      
-    envelope.gain.linearRampToValueAtTime(.8*volume,time+.1);   
-    envelope.gain.linearRampToValueAtTime(0,time+.6);
-    var noisegain = actx.createGain(); 
-    noisegain.gain.setValueAtTime(0,time);
-    noisegain.gain.linearRampToValueAtTime(1*volume,time+.0001);
-    noisegain.gain.linearRampToValueAtTime(0,time+.06);
-    var output = actx.createGain();
-    output.gain.value = GLOBAL_GAIN;
-    // Routing
-    noise.connect(noisegain);
-    noisegain.connect(filter);
-    envelope.connect(filter);
-    filter.connect(output);
-    output.connect(destination)
-    // get rid of it
-    setTimeout(function(){
-      //console.log("remove",--count);
-      noise.disconnect();
-      envelope.disconnect();
-      noisegain.disconnect();
-      filter.disconnect();
-      output.disconnect();
-    },(((offset-actx.currentTime)+3)*1000<<0))      
-  }
-  /**
-  * Snare
-  */
-  var snare = function(actx,destination,freq,duration,volume,offset){  
-    //console.log("add",++count);
-    var time = (offset||0);
-    // sources
-    
-    var noise = actx.createBufferSource();
-    noise.buffer = pink_noise;
-    noise.loop = true;
-    noise.start(time);
-    noise.stop((offset+2))
-    var oscillatorA = actx.createOscillator(); 
-    oscillatorA.frequency.value = freq;
-    oscillatorA.type = 0;
-    oscillatorA.start(time+.0001);
-    oscillatorA.stop(offset+duration+1)
-    // filter
-    var filter = actx.createBiquadFilter();
-    filter.type = filter.ALLPASS; 
-    filter.Q.setValueAtTime(.5,time);
-    filter.Q.linearRampToValueAtTime(1,time+.05);
-    filter.frequency.setValueAtTime(freq/2,time);
-    filter.frequency.linearRampToValueAtTime(freq*2,time+.8 );   
-    // Gain
-    var envelope = actx.createGain();
-    envelope.gain.setValueAtTime(0,time);      
-    envelope.gain.linearRampToValueAtTime(1*volume,time+.0001);      
-    envelope.gain.linearRampToValueAtTime(.8*volume,time+.1);   
-    envelope.gain.linearRampToValueAtTime(0,time+.6);
-    var noisegain = actx.createGain(); 
-    noisegain.gain.setValueAtTime(0,time);
-    noisegain.gain.linearRampToValueAtTime(1*volume,time+.0001);
-    noisegain.gain.linearRampToValueAtTime(0,time+.06);
-    var output = actx.createGain();
-    output.gain.value = GLOBAL_GAIN;
-    // Routing
-    oscillatorA.connect(envelope);
-    noise.connect(noisegain);
-    noisegain.connect(output);
-    envelope.connect(filter);
-    filter.connect(output);
-    output.connect(destination)
-    // get rid of it
-    setTimeout(function(){
-      //console.log("remove",--count);
-      oscillatorA.disconnect();
-      noise.disconnect();
-      envelope.disconnect();
-      noisegain.disconnect();
-      filter.disconnect();
-      output.disconnect();
-    },(((offset-actx.currentTime)+3)*1000<<0))      
-  }
-  /**
-  * Industrial Lead
-  */
-  var lead = function(actx,destination,freq,duration,volume,offset){
-    //console.log("add",++count);
-    var time = (offset||0);   
-    var attack_volume = .95*volume;
-    var attack_time = .01;
-    var decay_time = .01;
-    var sustain_volume = .7*volume;
-    var release_time = .5;
-    var sustain_time = duration;
-    // sources
-    var oscillatorA = actx.createOscillator(); 
-    oscillatorA.frequency.value = freq;
-    oscillatorA.type = 0;
-    oscillatorA.start(time+.0001);
-    oscillatorA.stop(offset+duration+1)
-    var oscillatorB = actx.createOscillator(); 
-    oscillatorB.frequency.value = freq*2;
-    oscillatorB.type = 1  ;
-    oscillatorB.start(time);
-    oscillatorB.stop(offset+duration+1)
-    // filter
-    var filter = actx.createBiquadFilter();
-    filter.type = filter.BANDPASS; 
-    filter.Q.setValueAtTime(1,time);
-    filter.Q.linearRampToValueAtTime(0,time+attack_time+decay_time);
-    filter.frequency.setValueAtTime(freq/2,time);
-    filter.frequency.linearRampToValueAtTime(freq*2,time+attack_time+decay_time);
-    // gain
-    var envelope = actx.createGain();
-    envelope.gain.setValueAtTime(0,time);  
-    envelope.gain.linearRampToValueAtTime(attack_volume,time+attack_time);  
-    envelope.gain.linearRampToValueAtTime(
-      sustain_volume,time+attack_time+decay_time
-    );
-    envelope.gain.linearRampToValueAtTime(
-      0,time+attack_time+decay_time+sustain_time+release_time
-    );    
-    var output = actx.createGain();
-    output.gain.value = GLOBAL_GAIN;
-    // Routing
-    oscillatorA.connect(envelope);
-    oscillatorB.connect(envelope);
-    envelope.connect(filter);
-    filter.connect(output);
-    output.connect(destination)
-    // get rid of it
-    setTimeout(function(){
-      //console.log("remove",--count);
-      oscillatorA.disconnect();
-      oscillatorB.disconnect();
-      envelope.disconnect();
-      filter.disconnect();
-      output.disconnect();
-    },(((offset-actx.currentTime)+duration+3)*1000<<0))      
-  }
-  /**
-  * Deep Bass
-  */
-  var bass = function(actx,destination,freq,duration,volume,offset){
-    //console.log("add",++count);
-    var time = (offset||0);   
-    var attack_volume = .95*volume;
-    var attack_time = .002;
-    var decay_time = .1;
-    var sustain_volume = .7*volume;
-    var release_time = .05;
-    var sustain_time = duration;
-    // sources
-    var oscillatorA = actx.createOscillator(); 
-    oscillatorA.frequency.value = freq;
-    oscillatorA.type = 2;
-    oscillatorA.start(time);
-    oscillatorA.stop(offset+duration+1);
-    var oscillatorB = actx.createOscillator(); 
-    oscillatorB.frequency.value = freq;
-    oscillatorB.type = 1;
-    oscillatorB.start(time);
-    oscillatorB.stop(offset+duration+1);
-    var oscillatorC = actx.createOscillator(); 
-    oscillatorC.frequency.value = freq;
-    oscillatorC.type = 3;
-    oscillatorC.start(time+.002);
-    oscillatorC.stop(offset+duration+1);
-    // filter
-    var filter = actx.createBiquadFilter();
-    filter.type = filter.LOWPASS; 
-    filter.Q.setValueAtTime(1,time);
-    filter.Q.linearRampToValueAtTime(0.4,time+attack_time+decay_time);
-    filter.frequency.setValueAtTime(freq*1000,time);
-    filter.frequency.linearRampToValueAtTime(freq/2,time+attack_time+decay_time+sustain_time);
-    // gain
-    var envelope = actx.createGain();
-    envelope.gain.setValueAtTime(0,time);      
-    envelope.gain.linearRampToValueAtTime(attack_volume,time+attack_time);     
-    envelope.gain.linearRampToValueAtTime(
-      sustain_volume,time+attack_time+decay_time
-    );     
-    envelope.gain.linearRampToValueAtTime(
-      0,time+attack_time+decay_time+sustain_time+release_time
-    );
-    var output = actx.createGain();
-    output.gain.value = GLOBAL_GAIN;
-    // Routing
-    oscillatorA.connect(envelope);
-    oscillatorB.connect(envelope);
-    oscillatorC.connect(envelope);
-    envelope.connect(filter);
-    filter.connect(output);
-    output.connect(destination);
-    // get rid of it
-    setTimeout(function(){   
-      //console.log("remove",--count);
-      oscillatorA.disconnect();
-      oscillatorB.disconnect();
-      oscillatorC.disconnect();
-      envelope.disconnect();
-      filter.disconnect();
-      output.disconnect();
-    },(((offset-actx.currentTime)+duration+3)*1000<<0))      
-  }  
+(function(){
   /* GENERATORS ***************************************************************/
-  var makeWhiteNoise = function(actx,seconds){
-    var buffer_size = seconds * actx.sampleRate,
+  let makeWhiteNoise = function(actx,seconds){
+    let buffer_size = seconds * actx.sampleRate,
     noise_buffer = actx.createBuffer(
       1, buffer_size, actx.sampleRate
     ),
     data = noise_buffer.getChannelData(0);
-    for(var i = 0; i < buffer_size; i++) data[i] = Math.random() * 2 - 1;
+    for(let i = 0; i < buffer_size; i++) data[i] = Math.random() * 2 - 1;
     return noise_buffer;
   }
-  var makeSQNoise = function(actx,seconds){
-    var buffer_size = seconds * actx.sampleRate,
+  let makeSQNoise = function(actx,seconds){
+    let buffer_size = seconds * actx.sampleRate,
     noise_buffer = actx.createBuffer(
       1, buffer_size, actx.sampleRate
     ),
     data = noise_buffer.getChannelData(0);
-    for(var i = 0; i < buffer_size; i++)
+    for(let i = 0; i < buffer_size; i++) {
       data[i] = Math.pow(Math.random(),2) * 2 - 1;
+      data[i] = Math.min(1, Math.max(-1,data[i]))
+    }
     return noise_buffer;
   }
-  var makePinkNoise = function(actx,seconds){
-    var buffer_size = seconds * actx.sampleRate,
+  let makePinkNoise = function(actx,seconds){
+    let buffer_size = seconds * actx.sampleRate,
     noise_buffer = actx.createBuffer(
       1, buffer_size, actx.sampleRate
     ),
     data = noise_buffer.getChannelData(0);
-    var b0, b1, b2, b3, b4, b5, b6;
+    let b0, b1, b2, b3, b4, b5, b6;
     b0 = b1 = b2 = b3 = b4 = b5 = b6 = 0.0;
-    for(var i = 0; i < buffer_size; i++) {
-      var white = Math.random() * 2 - 1;
+    for(let i = 0; i < buffer_size; i++) {
+      let white = Math.random() * 2 - 1;
       b0 = 0.99886 * b0 + white * 0.0555179;
       b1 = 0.99332 * b1 + white * 0.0750759;
       b2 = 0.96900 * b2 + white * 0.1538520;
@@ -504,60 +69,341 @@ canvas{
       data[i] = b0 + b1 + b2 + b3 + b4 + b5 + b6 + white * 0.5362;
       data[i] *= 0.11; // (roughly) compensate for gain
       b6 = white * 0.115926;
+      data[i] = Math.min(1, Math.max(-1,data[i]))
     }
     return noise_buffer;
   }
-  var makeBrownianNoise = function(actx,seconds){
-    var buffer_size = seconds * actx.sampleRate,
+  let makeBrownianNoise = function(actx,seconds){
+    let buffer_size = seconds * actx.sampleRate,
     noise_buffer = actx.createBuffer(
       1, buffer_size, actx.sampleRate
     ),
-    data = noise_buffer.getChannelData(0);    
-    var last_out = 0.0;
-    for(var i = 0; i < buffer_size; i++) {
-      var white = Math.random() * 2 - 1;
+    data = noise_buffer.getChannelData(0);
+    let last_out = 0.0;
+    for(let i = 0; i < buffer_size; i++) {
+      let white = Math.random() * 2 - 1;
       data[i] = (last_out + (0.02 * white)) / 1.02;
       lastOut = data[i];
       data[i] *= 3.5; // (roughly) compensate for gain
+      data[i] = Math.min(1, Math.max(-1,data[i]))
     }
     return noise_buffer;
   }
-  var makeImpulseResponse = function(actx,duration,decay,reverse){
-    var length = actx.sampleRate * duration;
-    var impulse = actx.createBuffer(2, length, actx.sampleRate);
-    var impulseL = impulse.getChannelData(0);
-    var impulseR = impulse.getChannelData(1);  
+  let makeImpulseResponse = function(actx,duration,decay,reverse){
+    let length = actx.sampleRate * duration;
+    let impulse = actx.createBuffer(2, length, actx.sampleRate);
+    let impulseL = impulse.getChannelData(0);
+    let impulseR = impulse.getChannelData(1);
     if (!decay) decay = 2.0;
-    for(var i=0;i<length;i++){
-      var n = reverse ? length - i : i;
+    for(let i=0;i<length;i++){
+      let n = reverse ? length - i : i;
       impulseL[i] = (Math.random() * 2 - 1) * Math.pow(1 - n / length, decay);
       impulseR[i] = (Math.random() * 2 - 1) * Math.pow(1 - n / length, decay);
+      impulseL[i] = Math.min(1, Math.max(-1,impulseL[i]))
+      impulseR[i] = Math.min(1, Math.max(-1,impulseR[i]))
     }
     return impulse;
   }
+
+  let actx;
+  let oscilloscope;
+  let analyser;
+  let analyser_buffer_length;
+  let analyser_data;
+  let beats_per_minute = 160;
+  let ticks_per_beat = 4;
+  let beats_per_bar = 4;
+  let bars_per_phrase = 1;
+  let time_per_beat = 60/beats_per_minute;
+  let time_per_bar = time_per_beat*beats_per_bar;
+  let time_per_tick = time_per_beat/ticks_per_beat;
+  let time_per_phrase = time_per_bar*bars_per_phrase;
+  let beats_per_phrase = bars_per_phrase*beats_per_bar;
+  let ticks_per_phrase = beats_per_phrase*ticks_per_beat;
+  let pre_queue = time_per_phrase;
+  let queued;
+  let clock;
+  let count = 0;
+
+  /* INIT *********************************************************************/
+
+  if(!window.AudioContext){
+    if(!window.webkitAudioContext) throw("Your browser sucks");
+    else window.AudioContext = window.webkitAudioContext;
+  }
+  oscilloscope = document.getElementById("oscilloscope");
+  actx = new AudioContext();
+
+  queued = 0
+  clock = actx.currentTime;
+
+  let white_noise = makeWhiteNoise(actx,2);
+  let brownian_noise = makeWhiteNoise(actx,2);
+
+  let sequenceTime = 0
+  let startTime = 0
+  // Bus
+  kickChannel = actx.createGain()
+  snareChannel = actx.createGain()
+  hihatChannel = actx.createGain()
+  bassChannel = actx.createGain()
+
+  drumComp = actx.createDynamicsCompressor();
+  drumComp.knee.value = 20; //A decibel value representing the range above the threshold where the curve smoothly transitions to the "ratio" portion. Its default value is 30. This parameter is k-rate. Its nominal range is [0, 40].
+  drumComp.threshold.value = -60; //The decibel value above which the compression will start taking effect. Its default value is -24. This parameter is k-rate. Its nominal range is [-100, 0].
+  drumComp.ratio.value = 19; // The amount of dB change in input for a 1 dB change in output. Its default value is 12. This parameter is k-rate. Its nominal range is [1, 20].
+  drumComp.attack.value = .2 // The amount of time (in seconds) to reduce the gain by 10dB. Its default value is 0.003. This parameter is k-rate. Its nominal range is [0, 1].
+  drumComp.release.value = .31 // The amount of time (in seconds) to increase the gain by 10dB. Its default value is 0.250. This parameter is k-rate. Its nominal range is [0, 1].
+
+  masterChannel = actx.createGain()
+  masterChannel.gain.value = 1.
+  // Analyser
+  analyser = actx.createAnalyser()
+  analyser.fftSize = 2048
+  analyser_buffer_length = analyser.frequencyBinCount
+  analyser_data = new Uint8Array(analyser_buffer_length)
+  // routing
+  kickChannel.connect(drumComp)
+  snareChannel.connect(drumComp)
+  drumComp.connect(masterChannel)
+  bassChannel.connect(masterChannel)
+
+  hihatChannel.connect(masterChannel)
+  masterChannel.connect(actx.destination)
+  masterChannel.connect(analyser)
+
+  const BASS_FREQS = [61.7354, 77.7817, 34.6478, 92.4986, 97.9989, 48.9994, 61.7354, 69.2957]
+  const START_OFFSET = .1
+  let loop = function(){
+    clock = actx.currentTime + START_OFFSET;
+    if (!startTime) {
+       startTime = clock
+       masterChannel.gain.setValueAtTime(0, startTime)
+       masterChannel.gain.linearRampToValueAtTime(1., startTime + .5)
+    }
+    if(clock>=queued-pre_queue){
+      queueSequence();
+      queued += time_per_phrase;
+    }
+    requestAnimationFrame(() => {
+      drawOscilloscope();
+      loop();
+    })
+  }
+  loop()
+
+  function randomBassFreq() {
+    return BASS_FREQS[(Math.random()*BASS_FREQS.length)<<0]
+  }
+
+  function queueSequence() {
+    let tick
+    for(tick=0; tick<ticks_per_phrase;tick++) {
+      if (tick%8 == 0) kick(startTime + sequenceTime + tick * time_per_tick, .3+Math.random()*.1)
+      else if ((tick+6)%8 == 0 && Math.random()>.1) kick(startTime + sequenceTime + tick * time_per_tick, .1+Math.random()*.1)
+      else if ((tick+1)%16 == 0 && Math.random()>.5) kick(startTime + sequenceTime + tick * time_per_tick, .1+Math.random()*.1)
+
+      if ((tick+4)%8 == 0 && Math.random()>.1) snare(startTime + sequenceTime + tick * time_per_tick, .1+Math.random()*.3)
+      else if ((tick+6)%8 == 0 && Math.random()>.9) snare(startTime + sequenceTime + tick * time_per_tick, .1+Math.random()*.1)
+
+      if ((tick%4) == 0) hihat(startTime + sequenceTime + tick * time_per_tick +.0001, 0.1 +Math.random()*.3)
+      else if ((tick%2) == 0 && Math.random() > .6) hihat(startTime + sequenceTime + tick * time_per_tick +.0001, 0.1 +Math.random()*.2)
+
+
+      if ((tick%(16)) == 0 && Math.random() > .1) bass(startTime + sequenceTime + tick * time_per_tick , .6* Math.random()*.4, randomBassFreq(), 8*time_per_tick)
+      else if ((tick%(8)) == 0 && Math.random() > .6) bass(startTime + sequenceTime + tick * time_per_tick , .3* Math.random()*.4, randomBassFreq(), 8*time_per_tick)
+
+      if (((tick+2)%8) == 0 && Math.random() > .3) bass(startTime + sequenceTime + tick * time_per_tick , .6* Math.random()*.4, randomBassFreq(), 4*time_per_tick)
+    }
+    sequenceTime += ticks_per_phrase * time_per_tick
+    queued = startTime + sequenceTime
+  }
+
+  function kick(time, volume){
+    let osc = actx.createOscillator();
+    osc.type = "square"
+    osc.frequency.setValueAtTime(120 + Math.random() , time)
+    osc.frequency.linearRampToValueAtTime(40 + Math.random(), time+.1);
+    osc.start(time);
+    osc.stop(time+.3)
+    let env = actx.createGain();
+    env.gain.setValueAtTime(0,time);
+    env.gain.linearRampToValueAtTime(.8, time+.0001);
+    env.gain.linearRampToValueAtTime(.3, time+.001);
+    env.gain.linearRampToValueAtTime(0, time+.3);
+    let filter = actx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.setValueAtTime(.3, time)
+    filter.Q.linearRampToValueAtTime(.5,time+.1)
+    filter.frequency.setValueAtTime(1333, time)
+
+    let outGain = actx.createGain();
+    outGain.gain.value = volume / 3
+    osc.connect(env)
+    env.connect(filter)
+    filter.connect(outGain)
+    outGain.connect(kickChannel)
+    setTimeout(() => {
+      osc.disconnect()
+      env.disconnect()
+      filter.disconnect()
+      outGain.disconnect()
+    }, (time - actx.currentTime) * 1000  + 400)
+  }
+
+  function snare(time, volume){
+    let osc = actx.createOscillator();
+    osc.type = "sawtooth"
+    osc.frequency.setValueAtTime(55+Math.random(), time)
+    osc.start(time)
+    osc.stop(time +.19)
+
+    let osc2 = actx.createOscillator();
+    osc2.type = "triangle"
+    osc2.frequency.setValueAtTime(57+Math.random(), time)
+    osc2.start(time)
+    osc2.stop(time +.19)
+
+    let noise = actx.createBufferSource();
+    noise.buffer = brownian_noise;
+    noise.start(time);
+    noise.stop(time +.19)
+    let noiseGain = actx.createGain();
+    noiseGain.gain.setValueAtTime(0,time);
+    noiseGain.gain.linearRampToValueAtTime(.2, time+.1);
+
+    let env = actx.createGain();
+    env.gain.setValueAtTime(0,time);
+    env.gain.linearRampToValueAtTime(.6, time+.0001);
+    env.gain.linearRampToValueAtTime(.3, time+.01);
+    env.gain.linearRampToValueAtTime(0, time+.19);
+    let filter = actx.createBiquadFilter();
+    filter.type = 'allpass';
+    filter.Q.setValueAtTime(.1, time)
+    filter.Q.linearRampToValueAtTime(.8,time+.19)
+    filter.frequency.setValueAtTime(13, time)
+    filter.frequency.linearRampToValueAtTime(1,time+.5)
+
+    let outGain = actx.createGain();
+    outGain.gain.value = volume *.4
+    noise.connect(noiseGain)
+    noiseGain.connect(env)
+    osc.connect(env)
+    osc2.connect(env)
+    env.connect(filter)
+    filter.connect(outGain)
+    outGain.connect(snareChannel)
+    setTimeout(() => {
+      osc.disconnect()
+      osc2.disconnect()
+      noise.disconnect()
+      noiseGain.disconnect()
+      env.disconnect()
+      filter.disconnect()
+      outGain.disconnect()
+    }, (time - actx.currentTime) * 1000  + 290)
+  }
+
+
+  function hihat(time, volume){
+
+    let noise = actx.createBufferSource();
+    noise.buffer = white_noise;
+    noise.start(time);
+    noise.stop(time +.039)
+
+    let env = actx.createGain();
+    env.gain.setValueAtTime(0,time);
+    env.gain.linearRampToValueAtTime(.8, time+.0001);
+    env.gain.linearRampToValueAtTime(.6, time+.01);
+    env.gain.linearRampToValueAtTime(0, time+.039);
+    let filter = actx.createBiquadFilter();
+    filter.type = 'highpass';
+    filter.Q.setValueAtTime(.1, time)
+    filter.Q.linearRampToValueAtTime(.2,time+.001)
+    filter.frequency.setValueAtTime(13, time)
+    filter.frequency.linearRampToValueAtTime(1,time+.5)
+
+    let outGain = actx.createGain();
+    outGain.gain.value = volume *.6
+    noise.connect(env)
+    env.connect(filter)
+    filter.connect(outGain)
+    outGain.connect(hihatChannel)
+    setTimeout(() => {
+      noise.disconnect()
+      env.disconnect()
+      filter.disconnect()
+      outGain.disconnect()
+    }, (time - actx.currentTime) * 1000  + 200)
+  }
+
+  function bass(time, volume, freq, duration){
+    let osc = actx.createOscillator();
+    osc.type = "square"
+    osc.frequency.setValueAtTime(freq/2 , time)
+    osc.start(time)
+    osc.stop(time + duration)
+
+    let osc2 = actx.createOscillator();
+    osc2.type = "sine"
+    osc2.frequency.setValueAtTime(freq, time)
+    osc2.start(time)
+    osc2.stop(time + duration)
+
+    let env = actx.createGain();
+    env.gain.setValueAtTime(0,time);
+    env.gain.linearRampToValueAtTime(.8, time+.0001);
+    env.gain.linearRampToValueAtTime(.6, time + duration/4*3);
+    env.gain.linearRampToValueAtTime(0, time+duration);
+    let filter = actx.createBiquadFilter();
+    filter.type = 'lowpass';
+    filter.Q.setValueAtTime(.9, time)
+    filter.Q.linearRampToValueAtTime(.1,time+duration)
+    filter.frequency.setValueAtTime(600, time)
+    filter.frequency.linearRampToValueAtTime(5200, time+duration)
+
+    let outGain = actx.createGain();
+    outGain.gain.value =  volume * .9
+    //.filter.frequency.linearRampToValueAtTime(133,time+.5)
+    // Gain
+    osc.connect(env)
+    osc2.connect(env)
+    env.connect(filter)
+    filter.connect(outGain)
+    outGain.connect(bassChannel)
+
+    setTimeout(() => {
+      osc.disconnect()
+      osc2.disconnect()
+      env.disconnect()
+      filter.disconnect()
+      outGain.disconnect()
+    }, (time + duration) * 1000  + 100)
+  }
   /* VFX **********************************************************************/
-  var drawOscilloscope = function(){
-    var ctx = oscilloscope.getContext("2d");
+  let ctx = oscilloscope.getContext("2d");
+  function drawOscilloscope(){
     analyser.getByteTimeDomainData(analyser_data);
     ctx.fillStyle = 'rgba(0, 0, 0,.2)';
     ctx.beginPath();
     ctx.fillRect(0, 0, oscilloscope.width, oscilloscope.height);
     ctx.fill();
-    var slice_width = oscilloscope.width * 1.0 / analyser_buffer_length;
-    var x = 0;
+    let slice_width = oscilloscope.width * 1.0 / analyser_buffer_length;
+    let x = 0;
     ctx.beginPath();
     ctx.strokeStyle = 'rgb(255, 255, 255)';
-    for(var i = 0; i < analyser_buffer_length; i++) { 
-      var v = analyser_data[i] / 128.0;
-      var y = v * oscilloscope.height/2;
+    for(let i = 0; i < analyser_buffer_length; i++) {
+      let v = analyser_data[i] / 128.0;
+      let y = v * oscilloscope.height/2;
       if(i === 0) ctx.moveTo(x, y);
       else ctx.lineTo(x, y);
       x += slice_width;
-    } 
+    }
     ctx.stroke();
   }
 })()
-</script> 
+</script>
 
 
 </body></html>
