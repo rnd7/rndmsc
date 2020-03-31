@@ -15,11 +15,12 @@ html,body{
   margin: 0px;
   padding: 0px;
   overflow:hidden;
-}
-#canvas{
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 canvas{
-  cursor:default;
+  cursor:pointer;
 }
 
 </style>
@@ -27,6 +28,7 @@ canvas{
 <body>
 <canvas id="oscilloscope"></canvas>
 <script>
+
 (function(){
   /* GENERATORS ***************************************************************/
   let makeWhiteNoise = function(actx,seconds){
@@ -134,9 +136,44 @@ canvas{
   oscilloscope = document.getElementById("oscilloscope");
   actx = new AudioContext();
 
+  // One-liner to resume playback when user interacted with the page.
+  oscilloscope.addEventListener('click', function() {
+    console.log(actx.state)
+    if (isRunning()) {
+      stop()
+    } else {
+      start()
+    }
+
+  });
+
+  function start() {
+    actx.resume().then(() => {
+      initialized = true
+      clock = actx.currentTime;
+      analyser = actx.createAnalyser()
+      analyser_data = new Uint8Array(analyser_buffer_length)
+      masterChannel.connect(analyser)
+    });
+  }
+
+  function stop() {
+    actx.suspend().then(() => {
+      startTime = 0
+      queued = 0
+      sequenceTime = 0
+      if (analyser) analyser.disconnect()
+    });
+  }
+
+  function isRunning() {
+    return initialized && actx.state === "running"
+  }
+
   queued = 0
   clock = actx.currentTime;
 
+  let initialized = false;
   let white_noise = makeWhiteNoise(actx,2);
   let brownian_noise = makeWhiteNoise(actx,2);
 
@@ -170,23 +207,26 @@ canvas{
 
   hihatChannel.connect(masterChannel)
   masterChannel.connect(actx.destination)
-  masterChannel.connect(analyser)
 
   const BASS_FREQS = [61.7354, 77.7817, 34.6478, 92.4986, 97.9989, 48.9994, 61.7354, 69.2957]
   const START_OFFSET = .1
   let loop = function(){
-    clock = actx.currentTime + START_OFFSET;
-    if (!startTime) {
-       startTime = clock
-       masterChannel.gain.setValueAtTime(0, startTime)
-       masterChannel.gain.linearRampToValueAtTime(1., startTime + .5)
+    if (isRunning()) {
+      clock = actx.currentTime + START_OFFSET;
+      if (!startTime) {
+         startTime = clock
+         masterChannel.gain.setValueAtTime(0, startTime)
+         masterChannel.gain.linearRampToValueAtTime(1., startTime + .5)
+      }
+      if(clock>=queued-pre_queue){
+        queueSequence();
+        queued += time_per_phrase;
+      }
     }
-    if(clock>=queued-pre_queue){
-      queueSequence();
-      queued += time_per_phrase;
-    }
+
     requestAnimationFrame(() => {
-      drawOscilloscope();
+      if (isRunning()) drawOscilloscope()
+      else drawText()
       loop();
     })
   }
@@ -384,6 +424,7 @@ canvas{
   /* VFX **********************************************************************/
   let ctx = oscilloscope.getContext("2d");
   function drawOscilloscope(){
+    //console.log("draw")
     analyser.getByteTimeDomainData(analyser_data);
     ctx.fillStyle = 'rgba(0, 0, 0,.2)';
     ctx.beginPath();
@@ -401,6 +442,16 @@ canvas{
       x += slice_width;
     }
     ctx.stroke();
+  }
+  function drawText() {
+    ctx.fillStyle = 'rgba(0, 0, 0,1)';
+    ctx.beginPath();
+    ctx.fillRect(0, 0, oscilloscope.width, oscilloscope.height);
+    ctx.fill();
+    ctx.font = "30px sans-serif";
+    ctx.fillStyle = "white";
+    ctx.textAlign = "center";
+    ctx.fillText("CLICK ME", oscilloscope.width/2, oscilloscope.height/2 +7);
   }
 })()
 </script>
